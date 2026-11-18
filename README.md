@@ -103,7 +103,7 @@ here are iOS only.
 
 ## Results (2026-11-18)
 
-iPhone 17 Pro simulator, iOS 27.0, Appium 3.6.0 with the xcuitest driver,
+iPhone 17 Pro simulator, iOS 26.3, Appium 3.6.0 with the xcuitest driver,
 ChaosBank-iOS at `5100b5a`, Apple Silicon Mac. Six runs per mode, interleaved,
 with the first run of each mode dropped.
 
