@@ -56,6 +56,7 @@ public final class App {
                     .setAppPackage(ANDROID_PACKAGE)
                     .setAppActivity(".MainActivity")
                     .setNoReset(true)
+                    .setUiautomator2ServerLaunchTimeout(Duration.ofMinutes(2))
                     .setNewCommandTimeout(Duration.ofMinutes(5));
             if (cfg.udid() != null) o.setUdid(cfg.udid());
             driver = new AndroidDriver(server.toURL(), o);
@@ -76,8 +77,11 @@ public final class App {
             List<List<String>> extras = new ArrayList<>();
             extras.add(List.of("s", "CHAOSBANK_START_UNLOCKED", "1"));
             if (!defects.isEmpty()) extras.add(List.of("s", "CHAOSBANK_DEFECTS", joined));
+            // `component`, not `intent`: the driver puts `intent` positionally before
+            // the extras, and `am` ignores every option after a positional argument.
             driver.executeScript("mobile: startActivity", Map.of(
-                    "intent", ANDROID_PACKAGE + "/.MainActivity",
+                    "component", ANDROID_PACKAGE + "/.MainActivity",
+                    "wait", true,
                     "stop", true,
                     "extras", extras));
         }
@@ -121,7 +125,16 @@ public final class App {
             return label != null ? label : String.valueOf(e.getAttribute("value"));
         }
         String text = e.getText();
-        return text != null && !text.isBlank() ? text : String.valueOf(e.getAttribute("content-desc"));
+        if (text != null && !text.isBlank()) return text;
+        String desc = e.getAttribute("content-desc");
+        if (desc != null && !desc.isBlank()) return desc;
+        // A Compose container (a card) doesn't carry its children's text the way an
+        // iOS combined element carries its label, so read them in order, like TalkBack.
+        StringBuilder all = new StringBuilder();
+        for (WebElement child : e.findElements(By.xpath(".//*[@text!='']"))) {
+            all.append(all.isEmpty() ? "" : " ").append(child.getText());
+        }
+        return all.toString();
     }
 
     public String value(WebElement e) {
@@ -142,6 +155,13 @@ public final class App {
         }
         if (last == null) throw new AssertionError("no number in '" + label + "'");
         return last;
+    }
+
+    /** Puts the keyboard away so it doesn't cover the button below the form (Android only). */
+    public void hideKeyboard() {
+        if (platform != Platform.ANDROID) return;
+        AndroidDriver android = (AndroidDriver) driver;
+        if (android.isKeyboardShown()) android.hideKeyboard();
     }
 
     public void quit() {

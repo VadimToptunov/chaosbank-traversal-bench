@@ -70,6 +70,7 @@ public class TransferSteps {
     @Irreversible
     @When("I continue and confirm")
     public void continueAndConfirm() {
+        app().hideKeyboard();
         app().el("transfer.continueButton").click();
         app().el("transfer.confirmButton").click();
         if (!app().gone("transfer.confirmButton", Duration.ofSeconds(20))) {
@@ -97,9 +98,17 @@ public class TransferSteps {
 
     private void type(String id, String text) {
         WebElement field = app().el(id);
+        // Mode B reaches a field after undoing a sibling. If the undo left text
+        // behind, the new input would be appended to it, so refuse to start.
+        String before = app().value(field);
+        if (!before.isEmpty() && !isPlaceholder(field, before)) {
+            throw new IllegalStateException(id + " isn't empty before typing: '" + before + "'");
+        }
         field.click();
         field.sendKeys(text);
-        String now = app().value(field);
+        // Re-read through a fresh lookup: UiAutomator2 can hand back a cached node
+        // that still shows the text from before the recomposition.
+        String now = readFresh(id, text, true, Duration.ofSeconds(2));
         // Some keyboards can't type every character (a decimal pad has no minus).
         // Say so instead of testing a value that never got in.
         if (!text.isBlank() && !now.contains(text)) {
@@ -110,10 +119,28 @@ public class TransferSteps {
     private void clear(String id) {
         WebElement field = app().el(id);
         field.clear();
-        String left = app().value(field);
-        if (!left.isEmpty() && !isPlaceholder(field, left)) {
+        String left = readFresh(id, "", false, Duration.ofMillis(500));
+        if (!left.isEmpty() && !isPlaceholder(app().el(id), left)) {
+            field = app().el(id);
             field.click();
             field.sendKeys("\b".repeat(left.length()));
+        }
+    }
+
+    /**
+     * The field's value, re-read through fresh lookups until it contains {@code want}
+     * (or is empty), for at most {@code budget}. Bounded by time, not by attempts:
+     * one lookup costs ~30 ms on Android and several hundred on iOS.
+     */
+    private String readFresh(String id, String want, boolean contains, Duration budget) {
+        long deadline = System.nanoTime() + budget.toNanos();
+        String now;
+        while (true) {
+            WebElement f = app().el(id);
+            now = app().value(f);
+            boolean done = contains ? (want.isBlank() || now.contains(want)) : (now.isEmpty() || isPlaceholder(f, now));
+            if (done || System.nanoTime() >= deadline) return now;
+            sleep(100);
         }
     }
 

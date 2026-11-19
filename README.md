@@ -52,8 +52,10 @@ four of them share the recipient step too.
 
 ## Running it
 
-You need JDK 21, Maven, Appium 2+ with the `xcuitest` driver, and ChaosBank
-installed on a booted simulator (`VadimToptunov.ChaosBank`).
+You need JDK 21, Maven and Appium 2+. For iOS: the `xcuitest` driver and
+ChaosBank installed on a booted simulator (`VadimToptunov.ChaosBank`). For
+Android: the `uiautomator2` driver, `ANDROID_HOME` exported for Appium, and a
+ChaosBank-Android build with `testTagsAsResourceId` on a running emulator.
 
 ```bash
 appium --port 4723
@@ -71,6 +73,8 @@ JAVA_OPTS="-Dudid=<simulator udid>" ./run.sh speed 6
 JAVA_OPTS="-Dudid=<simulator udid>" ./run.sh honesty
 ```
 
+On Android, add `-Dplatform=android` to `JAVA_OPTS`.
+
 - `once A|B`: one run, prints the result JSON.
 - `speed N`: N runs of each mode, interleaved (A B, B A, ...) so simulator drift
   hits both. The first run of each mode is dropped as warm-up. Writes `speed.md`.
@@ -82,11 +86,18 @@ timing, because it costs the same in both modes.
 
 ### Android
 
-The step layer and the launch code already handle Android (`-Dplatform=android`,
-intent extras instead of launch arguments). ChaosBank-Android doesn't expose
-its Compose test tags to UiAutomator yet, though (`testTagsAsResourceId`), so
-Appium can't find the elements there. Until the app does that, the numbers
-here are iOS only.
+The steps don't branch on the platform. Launching and reading do:
+
+- ChaosBank-Android has to expose its Compose test tags as resource ids
+  (`testTagsAsResourceId`), on the root and on each bottom sheet, which is a
+  window of its own.
+- The launch uses `mobile: startActivity` with `component`, not `intent`. The
+  driver puts `intent` before the extras, and `am` ignores every option after it.
+- A Compose card doesn't carry its children's text the way an iOS combined
+  element carries its label, so on Android a card is read child by child.
+- UiAutomator2 can return a cached node that still shows the old text, so
+  field values are re-read through a fresh lookup.
+- The keyboard covers Continue, so it's put away before the tap.
 
 ## Limits
 
@@ -101,29 +112,47 @@ here are iOS only.
   thing tried here is running *unmodified* Gherkin scenarios as a prefix-tree
   traversal while keeping a verdict per scenario.
 
-## Results (2026-11-18)
+## Results (2026-11-19)
 
-iPhone 17 Pro simulator, iOS 26.3, Appium 3.6.0 with the xcuitest driver,
-ChaosBank-iOS at `5100b5a`, Apple Silicon Mac. Six runs per mode, interleaved,
-with the first run of each mode dropped.
+Six runs per mode, interleaved, with the first run of each mode dropped.
+ChaosBank-iOS at `5100b5a`, ChaosBank-Android at `90586f3` plus the
+`testTagsAsResourceId` change. Apple Silicon Mac, Appium 3.6.0.
 
-| | A: each scenario from scratch | B: prefix-tree traversal |
-|---|---|---|
-| median wall time | 49.0 s | 26.4 s |
-| min – max | 48.7 – 49.7 s | 26.1 – 26.5 s |
-| app launches per run | 5 | 1 |
-| step executions per run | 32 | 17 |
-| prefix replays | – | 0 |
-| every scenario green, every run | yes | yes |
+| | iOS: A | iOS: B | Android: A | Android: B |
+|---|---|---|---|---|
+| device | iPhone 17 Pro sim, iOS 26.3 | | Pixel 3a emulator, API 34 | |
+| median wall time | 53.4 s | 32.8 s | 144.3 s | 59.4 s |
+| min – max | 52.9 – 53.9 s | 32.2 – 32.8 s | 140.6 – 153.7 s | 55.0 – 61.3 s |
+| app launches per run | 5 | 1 | 5 | 1 |
+| step executions per run | 32 | 17 | 32 | 17 |
+| prefix replays | – | 0 | – | 0 |
+| every scenario green, every run | yes | yes | yes | yes |
+| **speed-up** | | **1.63x** | | **2.43x** |
 
-That's 1.85x on five scenarios. Honesty control: each of the six defects,
-switched on alone, turned its scenario red in both modes, with no other reds.
+The gap between the platforms is the launch. A cold start of the Compose app on
+the emulator costs much more than on the simulator, and B pays it once instead
+of five times.
 
-| defect | A | B |
-|---|---|---|
-| `zeroAmountAccepted` | red | red |
-| `transferNegativeCredits` | red | red |
-| `amountExceedsBalanceAllowed` | red | red |
-| `whitespaceRecipient` | red | red |
-| `transferRoundsUp` | red | red |
-| `transferDebitsWrongAccount` | red | red |
+Honesty control: on both platforms, each of the six defects, switched on alone,
+turned its scenario red in both modes, with no other reds.
+
+| defect | iOS A | iOS B | Android A | Android B |
+|---|---|---|---|---|
+| `zeroAmountAccepted` | red | red | red | red |
+| `transferNegativeCredits` | red | red | red | red |
+| `amountExceedsBalanceAllowed` | red | red | red | red |
+| `whitespaceRecipient` | red | red | red | red |
+| `transferRoundsUp` | red | red | red | red |
+| `transferDebitsWrongAccount` | red | red | red | red |
+
+What the control caught while this was being built:
+
+- An emulator ANR dialog (System UI, then Digital Wellbeing) kept the app from
+  starting. The clean runs went red and the report said not to trust the speed
+  number.
+- After clearing a field, mode B could append new input to what the undo left
+  behind (`999999100.40`). Typing now refuses to start on a field that isn't
+  empty.
+- An earlier iOS number, 1.85x, came from a version without the fresh re-reads
+  and the empty-field check. Those checks cost time in both modes, so the
+  current 1.63x is the one to quote.
